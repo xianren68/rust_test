@@ -9,3 +9,12 @@ safe, fast, productive.
 Pick three.";
 assert_eq!(vec!["safe, fast, productive."], search(query, contents));
 }
+#[test]
+fn case_insensitive(){
+    let query = "Duct";
+    let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.";
+assert_eq!(vec!["safe, fast, productive."], search_case_insensitive(query, contents));
+}
