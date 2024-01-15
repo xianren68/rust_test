@@ -5,7 +5,7 @@ use std::io::{self, stdout, Write};
 use std::time::Duration;
 
 /// 版本号
-const VERSION:&str = "0.0.1";
+const VERSION: &str = "0.0.1";
 /// 程序退出时的收尾工作
 struct CleanUp;
 
@@ -52,14 +52,47 @@ impl Editor {
         }
     }
     // 判断终端是否能够继续输入
-    fn process_keypress(&self) -> Result<bool, io::Error> {
+    fn process_keypress(&mut self) -> Result<bool, io::Error> {
         match self.reader.read_key()? {
+            // ctrl + q 退出程序
             KeyEvent {
                 code: KeyCode::Char('q'),
                 modifiers: KeyModifiers::CONTROL,
                 kind: _,
                 state: _,
             } => Ok(false),
+            // 控制光标位置
+            KeyEvent {
+                code:
+                    direction @ (KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::End
+                    | KeyCode::Home),
+                modifiers: KeyModifiers::NONE,
+                kind: _,
+                state: _,
+            } => {
+                self.output.move_cursor(direction);
+                return Ok(true);
+            }
+            // 控制翻页
+            KeyEvent {
+                code: val @ (KeyCode::PageUp | KeyCode::PageDown),
+                modifiers: KeyModifiers::NONE,
+                kind: _,
+                state: _,
+            } => {
+                (0..self.output.win_size.1).for_each(|_|{
+                    self.output.move_cursor(if matches!(val,KeyCode::PageUp){
+                        KeyCode::Up
+                    }else {
+                        KeyCode::Down
+                    })
+                });
+                return Ok(true)
+                }
             _ => Ok(true),
         }
     }
@@ -76,6 +109,8 @@ struct OutPut {
     win_size: (usize, usize),
     // 编辑的内容
     editor_contents: EditorContents,
+    // 光标位置
+    cursor_controller: CursorController,
 }
 
 impl OutPut {
@@ -86,6 +121,7 @@ impl OutPut {
         Self {
             win_size,
             editor_contents: EditorContents::new(),
+            cursor_controller: CursorController::new(win_size),
         }
     }
     // 绘制编辑器左侧波浪线与一些版本信息
@@ -94,19 +130,19 @@ impl OutPut {
         let screen_columns = self.win_size.0;
         for i in 0..screen_rows {
             if i == screen_rows - 3 {
-                let mut welcome = format!("Pound editor  -- Version{}",VERSION);
+                let mut welcome = format!("Pound editor  -- Version{}", VERSION);
                 if welcome.len() > screen_columns {
                     welcome.truncate(screen_columns);
                 }
                 // 版本信息居中显示
-                let mut padding = (screen_columns - welcome.len())/2;
+                let mut padding = (screen_columns - welcome.len()) / 2;
                 if padding != 0 {
                     self.editor_contents.push('~');
                     padding -= 1;
                 }
                 (0..padding).for_each(|_| self.editor_contents.push(' '));
                 self.editor_contents.push_str(&welcome)
-            }else {
+            } else {
                 self.editor_contents.push('~')
             }
             queue!(
@@ -134,9 +170,19 @@ impl OutPut {
             cursor::Hide, // 隐藏光标
             cursor::MoveTo(0, 0)
         )?;
+        let CursorController {
+            cursor_x, cursor_y, ..
+        } = self.cursor_controller;
         self.draw_rows();
-        queue!(self.editor_contents, cursor::MoveTo(0, 0), cursor::Show)?;
+        queue!(
+            self.editor_contents,
+            cursor::MoveTo(cursor_x as u16, cursor_y as u16),
+            cursor::Show
+        )?;
         self.editor_contents.flush()
+    }
+    fn move_cursor(&mut self, direction: KeyCode) {
+        self.cursor_controller.move_cursor(direction)
     }
 }
 
@@ -177,6 +223,59 @@ impl io::Write for EditorContents {
         stdout().flush()?;
         self.content.clear();
         out
+    }
+}
+
+/// 光标控制
+struct CursorController {
+    cursor_x: usize,
+    cursor_y: usize,
+    screen_columns: usize,
+    screen_rows: usize,
+}
+
+impl CursorController {
+    fn new(win_size: (usize, usize)) -> Self {
+        Self {
+            cursor_x: 0,
+            cursor_y: 0,
+            screen_columns: win_size.0,
+            screen_rows: win_size.1,
+        }
+    }
+    fn move_cursor(&mut self, direction: KeyCode) {
+        match direction {
+            // 上下左右
+            KeyCode::Up => {
+                if self.cursor_y != 0 {
+                    self.cursor_y -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.cursor_y != self.screen_rows - 1 {
+                    self.cursor_y += 1;
+                }
+            }
+            KeyCode::Left => {
+                if self.cursor_x != 0 {
+                    self.cursor_x -= 1;
+                }
+            }
+            KeyCode::Right => {
+                if self.cursor_x != self.screen_columns - 1 {
+                    self.cursor_x += 1;
+                }
+            }
+            // 回到顶部
+            KeyCode::Home => {
+                self.cursor_y = 0;
+            }
+            // 到底部
+            KeyCode::End => {
+                self.cursor_y = self.screen_rows;
+            }
+            _ => unimplemented!(),
+        }
     }
 }
 pub fn run() -> Result<(), io::Error> {
